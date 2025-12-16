@@ -1,0 +1,23 @@
+#!/bin/sh
+
+### BEGIN INIT INFO
+# Provides:          splash
+# Required-Start:    $local_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Display splash screen during boot
+### END INIT INFO
+
+# Path to the splash screen image
+SPLASH_IMAGE="/home/pi/splash.png"
+
+# Wait for the framebuffer to be ready
+sleep 1
+
+# Display the splash screen image using psplash (framebuffer splash)
+if [ -f "$SPLASH_IMAGE" ]; then
+    /usr/bin/psplash -i $SPLASH_IMAGE
+    sleep 5  # Display for 5 seconds
+fi
+
+exit 0
