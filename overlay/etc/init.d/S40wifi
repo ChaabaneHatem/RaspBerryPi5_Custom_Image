@@ -1,0 +1,93 @@
+#!/bin/sh
+
+case "$1" in
+  start)
+    echo "[wifi_ap] Setting up wlan0 as AP..."
+
+    # Vérifier si le module brcmfmac est déjà chargé
+    if ! lsmod | grep -q brcmfmac; then
+        echo "[wifi_ap] Loading brcmfmac module..."
+        modprobe brcmfmac
+        if [ $? -eq 0 ]; then
+            echo "[wifi_ap] brcmfmac module loaded successfully."
+        else
+            echo "[wifi_ap] Failed to load brcmfmac module."
+            exit 1
+        fi
+    else
+        echo "[wifi_ap] brcmfmac module is already loaded."
+    fi
+
+    sleep 2
+
+
+    # Vérifier si les fichiers de configuration existent
+    if [ ! -f /etc/hostapd/hostapd.conf ]; then
+        echo "[wifi_ap] hostapd config file not found!"
+        exit 1
+    fi
+
+    if [ ! -f /etc/dnsmasq.conf ]; then
+        echo "[wifi_ap] dnsmasq config file not found!"
+        exit 1
+    fi
+
+    if [ ! -f /etc/mosquitto/mosquitto.conf ]; then
+        echo "[wifi_ap] mosquitto config file not found!"
+        exit 1
+    fi
+
+    # mettre l'interface wlan0 up
+    ip link set wlan0 up
+
+    # Configurer wlan0 en mode AP
+    iw dev wlan0 set type __ap
+
+    # IP statique pour wlan0
+    ip addr flush dev wlan0
+    ip addr add 192.168.4.1/24 dev wlan0
+
+    # Démarrer hostapd si ce n'est pas déjà fait
+    if ! pgrep -x "hostapd" > /dev/null; then
+        echo "[wifi_ap] Starting hostapd..."
+        hostapd -B /etc/hostapd/hostapd.conf
+    else
+        echo "[wifi_ap] hostapd is already running."
+    fi
+
+    # Démarrer dnsmasq si ce n'est pas déjà fait
+    if ! pgrep -x "dnsmasq" > /dev/null; then
+        echo "[wifi_ap] Starting dnsmasq..."
+        dnsmasq -C /etc/dnsmasq.conf
+    else
+        echo "[wifi_ap] dnsmasq is already running."
+    fi
+
+    # Démarrer mosquitto
+    echo "[wifi_ap] Starting mosquitto..."
+    mosquitto -c /etc/mosquitto/mosquitto.conf &
+
+    ;;
+  stop)
+    echo "[wifi_ap] Stopping services..."
+    
+    # Arrêter les services et vérifier leur succès
+    killall mosquitto 2>/dev/null || echo "[wifi_ap] Failed to stop mosquitto"
+    killall dnsmasq 2>/dev/null || echo "[wifi_ap] Failed to stop dnsmasq"
+    killall hostapd 2>/dev/null || echo "[wifi_ap] Failed to stop hostapd"
+
+    # Réinitialiser l'interface wlan0
+    ip addr flush dev wlan0
+    ip link set wlan0 down
+    ;;
+  restart)
+    $0 stop
+    $0 start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
+
+exit 0

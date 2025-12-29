@@ -1,0 +1,123 @@
+#!/bin/sh
+
+APP_DIR="/usr/bin/TankApp"
+APP="Tank_Interface_GUI.py"
+PY="python3"
+
+LOG="/tmp/tankapp.log"
+PIDFILE="/var/run/tankapp.pid"
+
+start_mosquitto() {
+  # déjà lancé ?
+  if pidof mosquitto >/dev/null 2>&1; then
+    echo "[S57app] mosquitto already running" >> "$LOG"
+    return 0
+  fi
+
+  # script init présent ?
+  for s in /etc/init.d/*mosquitto* /etc/init.d/*Mosquitto*; do
+    if [ -x "$s" ]; then
+      echo "[S57app] starting mosquitto via $s" >> "$LOG"
+      "$s" start >> "$LOG" 2>&1
+      return 0
+    fi
+  done
+
+  # sinon essayer de lancer le binaire
+  if command -v mosquitto >/dev/null 2>&1; then
+    if [ -f /etc/mosquitto/mosquitto.conf ]; then
+      echo "[S57app] starting mosquitto (conf)" >> "$LOG"
+      mosquitto -c /etc/mosquitto/mosquitto.conf >> "$LOG" 2>&1 &
+    else
+      echo "[S57app] starting mosquitto (default)" >> "$LOG"
+      mosquitto >> "$LOG" 2>&1 &
+    fi
+  else
+    echo "[S57app] mosquitto not found" >> "$LOG"
+  fi
+}
+
+wait_for_ap_ip() {
+  # si tu utilises wlan0 en AP avec 192.168.4.1, on attend un peu
+  i=0
+  while [ $i -lt 10 ]; do
+    if ip -4 addr show wlan0 2>/dev/null | grep -q "192.168.4.1"; then
+      echo "[S57app] wlan0 AP IP ok" >> "$LOG"
+      return 0
+    fi
+    sleep 1
+    i=$((i+1))
+  done
+  echo "[S57app] wlan0 AP IP not detected (continuing anyway)" >> "$LOG"
+}
+
+setup_qt() {
+  # Choisir la platform Qt
+  if [ -e /dev/fb0 ]; then
+    export QT_QPA_PLATFORM=linuxfb
+  else
+    # fallback si pas de framebuffer
+    export QT_QPA_PLATFORM=vnc
+  fi
+
+  # Fix fonts: Qt cherche /usr/lib/fonts
+  if [ ! -e /usr/lib/fonts ]; then
+    if [ -d /usr/share/fonts ]; then
+      ln -s /usr/share/fonts /usr/lib/fonts 2>/dev/null || mkdir -p /usr/lib/fonts
+    else
+      mkdir -p /usr/lib/fonts
+    fi
+  fi
+}
+
+start() {
+  echo "========== [S57app] start $(date) ==========" >> "$LOG"
+
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    echo "[S57app] already running (pid $(cat "$PIDFILE"))" >> "$LOG"
+    return 0
+  fi
+
+  setup_qt
+  start_mosquitto
+  wait_for_ap_ip
+
+  if [ ! -f "$APP_DIR/$APP" ]; then
+    echo "[S57app] ERROR: $APP_DIR/$APP not found" >> "$LOG"
+    return 1
+  fi
+
+  cd "$APP_DIR" || return 1
+  echo "[S57app] launching: QT_QPA_PLATFORM=$QT_QPA_PLATFORM" >> "$LOG"
+  $PY "./$APP" >> "$LOG" 2>&1 &
+  echo $! > "$PIDFILE"
+  echo "[S57app] started pid=$(cat "$PIDFILE")" >> "$LOG"
+}
+
+stop() {
+  echo "========== [S57app] stop $(date) ==========" >> "$LOG"
+  if [ -f "$PIDFILE" ]; then
+    PID="$(cat "$PIDFILE")"
+    if kill -0 "$PID" 2>/dev/null; then
+      kill "$PID" 2>/dev/null
+      sleep 1
+      kill -9 "$PID" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+    echo "[S57app] stopped" >> "$LOG"
+  else
+    echo "[S57app] not running (no pidfile)" >> "$LOG"
+  fi
+}
+
+case "$1" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
+
+exit 0
